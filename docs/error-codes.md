@@ -399,6 +399,7 @@ Defined in [contracts/incentive_campaigns/src/lib.rs](../contracts/incentive_cam
 | 22 | `InsufficientStake` | `unstake` asked for more than the caller has staked in the campaign. | Unstake at most `get_stake(campaign_id, provider)`. |
 | 23 | `CampaignEnded` | `stake` was called at or after the campaign's `end_time`. | Stake before the campaign ends; `unstake` and `claim_rewards` stay available. |
 | 24 | `LegacyCampaign` | `stake` was called on a campaign created before the stake-based model. | Legacy campaigns keep paying from the live LP balance; stake only into campaigns created after the upgrade. See [incentive-campaigns.md](incentive-campaigns.md). |
+| 25 | `Paused` | Contract is paused by governance. | Wait for governance to unpause before calling `create_campaign`, `set_campaign_rate` or `claim_rewards`. |
 
 
 
