@@ -6,7 +6,13 @@ use soroban_sdk::{
     Address, Env, IntoVal, String, Symbol, Val,
 };
 
-const TOKEN_WASM: &[u8] = include_bytes!("../../../target/wasm32v1-none/release/token.wasm");
+#[cfg(feature = "testutils")]
+use super::WASM as TOKEN_WASM;
+#[cfg(not(feature = "testutils"))]
+const TOKEN_WASM: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/wasm32v1-none/release/token.wasm"
+));
 
 /// Helper to assert that a privileged invocation strictly enforces authorization.
 ///
@@ -240,111 +246,36 @@ fn test_migrate_legacy_lock_requires_auth() {
 }
 
 #[test]
-fn test_table_driven_all_admin_functions_require_auth() {
-    let cases: [(&str, fn(&Fixture) -> (Address, MockAuthInvoke)); 7] = [
-        ("mint", |f| {
-            let to = Address::generate(&f.env);
-            (
-                f.admin.clone(),
-                MockAuthInvoke {
-                    contract: &f.contract_addr,
-                    fn_name: "mint",
-                    args: (to, 100_i128).into_val(&f.env),
-                    sub_invokes: &[],
-                },
-            )
-        }),
-        ("burn", |f| {
-            let from = Address::generate(&f.env);
-            f.client.mint(&from, &100_i128);
-            (
-                f.admin.clone(),
-                MockAuthInvoke {
-                    contract: &f.contract_addr,
-                    fn_name: "burn",
-                    args: (from, 25_i128).into_val(&f.env),
-                    sub_invokes: &[],
-                },
-            )
-        }),
-        ("propose_admin", |f| {
-            let new_admin = Address::generate(&f.env);
-            (
-                f.admin.clone(),
-                MockAuthInvoke {
-                    contract: &f.contract_addr,
-                    fn_name: "propose_admin",
-                    args: (f.admin.clone(), new_admin).into_val(&f.env),
-                    sub_invokes: &[],
-                },
-            )
-        }),
-        ("accept_admin", |f| {
-            let new_admin = Address::generate(&f.env);
-            f.client.propose_admin(&f.admin, &new_admin);
-            (
-                new_admin.clone(),
-                MockAuthInvoke {
-                    contract: &f.contract_addr,
-                    fn_name: "accept_admin",
-                    args: (new_admin,).into_val(&f.env),
-                    sub_invokes: &[],
-                },
-            )
-        }),
-        ("upgrade", |f| {
-            let wasm_hash = f.env.deployer().upload_contract_wasm(TOKEN_WASM);
-            (
-                f.admin.clone(),
-                MockAuthInvoke {
-                    contract: &f.contract_addr,
-                    fn_name: "upgrade",
-                    args: (wasm_hash,).into_val(&f.env),
-                    sub_invokes: &[],
-                },
-            )
-        }),
-        ("set_locker", |f| {
-            let locker = Address::generate(&f.env);
-            (
-                f.admin.clone(),
-                MockAuthInvoke {
-                    contract: &f.contract_addr,
-                    fn_name: "set_locker",
-                    args: (locker,).into_val(&f.env),
-                    sub_invokes: &[],
-                },
-            )
-        }),
-        ("migrate_legacy_lock", |f| {
-            let holder = Address::generate(&f.env);
-            let locker = Address::generate(&f.env);
-            f.env.as_contract(&f.contract_addr, || {
-                f.env
-                    .storage()
-                    .persistent()
-                    .set(&DataKey::Locked(holder.clone()), &100_i128);
-            });
-            (
-                f.admin.clone(),
-                MockAuthInvoke {
-                    contract: &f.contract_addr,
-                    fn_name: "migrate_legacy_lock",
-                    args: (holder, locker, 50_i128).into_val(&f.env),
-                    sub_invokes: &[],
-                },
-            )
-        }),
-    ];
+fn test_lock_requires_auth() {
+    let f = setup_fixture();
+    let locker = Address::generate(&f.env);
+    let holder = Address::generate(&f.env);
+    f.client.set_locker(&locker);
+    f.client.mint(&holder, &100_i128);
+    let invoke = MockAuthInvoke {
+        contract: &f.contract_addr,
+        fn_name: "lock",
+        args: (holder.clone(), 40_i128).into_val(&f.env),
+        sub_invokes: &[],
+    };
+    assert_requires_auth(&f.env, &f.contract_addr, &locker, &invoke);
+    assert_eq!(f.client.locked_balance(&holder), 40_i128);
+}
 
-    for (fn_name, builder) in cases {
-        let f = setup_fixture();
-        let (signer_expected, invoke) = builder(&f);
-        assert_eq!(
-            invoke.fn_name, fn_name,
-            "test case setup mismatch for {}",
-            fn_name
-        );
-        assert_requires_auth(&f.env, &f.contract_addr, &signer_expected, &invoke);
-    }
+#[test]
+fn test_unlock_requires_auth() {
+    let f = setup_fixture();
+    let locker = Address::generate(&f.env);
+    let holder = Address::generate(&f.env);
+    f.client.set_locker(&locker);
+    f.client.mint(&holder, &100_i128);
+    f.client.lock(&holder, &60_i128);
+    let invoke = MockAuthInvoke {
+        contract: &f.contract_addr,
+        fn_name: "unlock",
+        args: (holder.clone(), locker.clone(), 25_i128).into_val(&f.env),
+        sub_invokes: &[],
+    };
+    assert_requires_auth(&f.env, &f.contract_addr, &locker, &invoke);
+    assert_eq!(f.client.locked_balance(&holder), 35_i128);
 }
